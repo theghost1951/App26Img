@@ -1,4 +1,4 @@
-import os, base64, requests
+import os, requests
 from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.responses import Response, JSONResponse
@@ -7,42 +7,34 @@ app = FastAPI()
 
 class Req(BaseModel):
     prompt: str
-    model: str = "black-forest-labs/FLUX.1-schnell"
-    width: int = 1024
-    height: int = 1024
+    model: str = "stabilityai/stable-diffusion-2-1"
+    width: int = 768
+    height: int = 768
 
 @app.post("/generate")
 def generate(r: Req):
     token = os.getenv("HF_TOKEN")
     if not token:
-        return JSONResponse({"error":"no HF_TOKEN"}, status_code=500)
+        return JSONResponse({"error":"HF_TOKEN not set in Render > Environment"}, status_code=500)
 
-    headers = {"Authorization": f"Bearer {token}", "Content-Type":"application/json"}
+    # Old inference API - FREE and supports SD 2.1 with no fal.ai
+    url = f"https://api-inference.huggingface.co/models/{r.model}"
+    headers = {"Authorization": f"Bearer {token}"}
+    payload = {"inputs": r.prompt}
 
-    # Use provider-specific endpoint - avoids hf-inference completely
-    for provider in ["fal-ai", "together"]:
-        try:
-            url = f"https://router.huggingface.co/{provider}/v1/images/generations"
-            payload = {"model": r.model, "prompt": r.prompt}
-            resp = requests.post(url, json=payload, headers=headers, timeout=120)
-            if not resp.ok:
-                print(f"{provider} failed {resp.status_code}: {resp.text[:1000]}")
-                continue
-            j = resp.json()
-            # fal-ai returns b64_json
-            b64 = j.get("data", [{}])[0].get("b64_json") if "data" in j else j.get("b64_json")
-            if b64:
-                return Response(content=base64.b64decode(b64), media_type="image/jpeg")
-            # sometimes returns url
-            img_url = j.get("data", [{}])[0].get("url") if "data" in j else None
-            if img_url:
-                return Response(content=requests.get(img_url).content, media_type="image/jpeg")
-        except Exception as e:
-            print(f"{provider} exc {e}")
-            continue
+    resp = requests.post(url, headers=headers, json=payload, timeout=120)
 
-    return JSONResponse({"error":"fal-ai + together both failed - check Render logs"}, status_code=500)
+    # HF returns raw JPEG when success, JSON when error
+    ctype = resp.headers.get("content-type","")
+    if resp.ok and "image" in ctype:
+        return Response(content=resp.content, media_type="image/jpeg")
+    
+    # Sometimes returns image even with octet-stream
+    if resp.ok and len(resp.content) > 10000:
+        return Response(content=resp.content, media_type="image/jpeg")
+
+    return JSONResponse({"error": resp.text[:1500]}, status_code=500)
 
 @app.get("/")
 def home():
-    return {"ok":True}
+    return {"ok": True, "model": "stabilityai/stable-diffusion-2-1"}
