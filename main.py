@@ -5,7 +5,7 @@ import requests, os, base64
 app = FastAPI()
 
 @app.get("/")
-def home(): return {"status": "Agnes 2.5 Flash Ready"}
+def home(): return {"status": "App25Img API Ready - SD 3.5 Large"}
 
 @app.post("/generate")
 async def generate(request: Request):
@@ -28,13 +28,11 @@ async def generate(request: Request):
     }
 
     if image_b64:
-        # IMAGE-TO-IMAGE - NO aspect_ratio allowed!
         img_bytes = base64.b64decode(image_b64)
         files["image"] = ("ref.png", img_bytes, "image/png")
         files["mode"] = (None, "image-to-image")
         files["strength"] = (None, str(strength))
     else:
-        # TEXT-TO-IMAGE - aspect_ratio allowed
         files["mode"] = (None, "text-to-image")
         files["aspect_ratio"] = (None, aspect)
 
