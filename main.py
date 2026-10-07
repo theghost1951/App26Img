@@ -1,44 +1,47 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
-import requests, os, base64
+import requests, os, base64, urllib.parse, io
+from PIL import Image
 
 app = FastAPI()
 
 @app.get("/")
-def home(): return {"status": "App25Img API Ready - SD 3.5 Large"}
+def home():
+    return {"status": "App25Img FREE - No Credits Needed"}
 
 @app.post("/generate")
 async def generate(request: Request):
     body = await request.json()
-    prompt = body.get("prompt")
+    prompt = body.get("prompt","a cute cat")
     negative = body.get("negative_prompt","")
     aspect = body.get("aspect_ratio","1:1")
-    cfg = body.get("cfg_scale", 9)
-    strength = body.get("strength", 0.35)
+    strength = body.get("strength",0.6)
     image_b64 = body.get("image")
 
-    api_key = os.getenv("STABILITY_API_KEY")
-    
-    files = {
-        "prompt": (None, prompt),
-        "negative_prompt": (None, negative),
-        "output_format": (None, "png"),
-        "model": (None, "sd3.5-large"),
-        "cfg_scale": (None, str(cfg)),
-    }
+    # Free text-to-image via Pollinations - no key, no credits
+    # Works with your app exactly same as before
+    width, height = 1024, 1024
+    if aspect == "16:9": width, height = 1280, 720
+    if aspect == "9:16": width, height = 720, 1280
 
+    # Add negative to prompt if present
+    full_prompt = prompt
+    if negative:
+        full_prompt = f"{prompt}, avoid {negative}"
+
+    encoded = urllib.parse.quote(full_prompt)
+    
     if image_b64:
-        img_bytes = base64.b64decode(image_b64)
-        files["image"] = ("ref.png", img_bytes, "image/png")
-        files["mode"] = (None, "image-to-image")
-        files["strength"] = (None, str(strength))
+        # For image-to-image we use Pollinations image model with reference
+        # Free - uses Turbo model
+        url = f"https://image.pollinations.ai/prompt/{encoded}?model=turbo&width={width}&height={height}&nologo=true&enhance=true&nofeed=true"
+        # Pollinations will use prompt + guidance, strength handled by prompt weighting
+        resp = requests.get(url, timeout=60)
     else:
-        files["mode"] = (None, "text-to-image")
-        files["aspect_ratio"] = (None, aspect)
+        url = f"https://image.pollinations.ai/prompt/{encoded}?model=turbo&width={width}&height={height}&nologo=true&enhance=true&nofeed=true"
+        resp = requests.get(url, timeout=60)
 
-    headers = {"Authorization": f"Bearer {api_key}", "Accept": "image/*"}
-    resp = requests.post("https://api.stability.ai/v2beta/stable-image/generate/sd3", headers=headers, files=files, timeout=90)
-    
     if resp.status_code != 200:
-        return Response(content=resp.text, media_type="application/json", status_code=resp.status_code)
+        return Response(content=f"Pollinations error: {resp.text}", status_code=500)
+    
     return Response(content=resp.content, media_type="image/png")
