@@ -1,5 +1,4 @@
 fastapi
 uvicorn
-huggingface_hub
 pillow
-python-multipart
+requests
