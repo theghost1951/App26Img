@@ -1,54 +1,44 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
-import requests
-import os
-import base64
+import requests, os, base64
 
 app = FastAPI()
 
 @app.get("/")
-def home():
-    return {"status": "Stability API Ready"}
+def home(): return {"status": "Agnes 2.5 Flash Engine Ready"}
 
 @app.post("/generate")
 async def generate(request: Request):
     body = await request.json()
     prompt = body.get("prompt")
+    negative = body.get("negative_prompt","")
+    aspect = body.get("aspect_ratio","1:1")
+    cfg = body.get("cfg_scale", 9)
+    strength = body.get("strength", 0.35)
     image_b64 = body.get("image")
-
-    if not prompt:
-        return {"error": "prompt required"}
+    image2_b64 = body.get("image2")
 
     api_key = os.getenv("STABILITY_API_KEY")
-
-    # Stability requires multipart/form-data ALWAYS
+    
     files = {
         "prompt": (None, prompt),
+        "negative_prompt": (None, negative),
         "output_format": (None, "png"),
         "model": (None, "sd3.5-large"),
+        "cfg_scale": (None, str(cfg)),
+        "aspect_ratio": (None, aspect),
+        "mode": (None, "text-to-image"),
     }
-
+    # If reference image(s) provided - lower strength = follow prompt MORE
     if image_b64:
         img_bytes = base64.b64decode(image_b64)
         files["image"] = ("ref.png", img_bytes, "image/png")
         files["mode"] = (None, "image-to-image")
-        files["strength"] = (None, "0.65")
-    else:
-        files["mode"] = (None, "text-to-image")
+        files["strength"] = (None, str(strength))
 
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "image/*"
-    }
-
-    resp = requests.post(
-        "https://api.stability.ai/v2beta/stable-image/generate/sd3",
-        headers=headers,
-        files=files,
-        timeout=60
-    )
-
+    headers = {"Authorization": f"Bearer {api_key}", "Accept": "image/*"}
+    resp = requests.post("https://api.stability.ai/v2beta/stable-image/generate/sd3", headers=headers, files=files, timeout=90)
+    
     if resp.status_code != 200:
         return Response(content=resp.text, media_type="application/json", status_code=resp.status_code)
-
     return Response(content=resp.content, media_type="image/png")
