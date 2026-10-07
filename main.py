@@ -1,38 +1,51 @@
-import os, requests
-from fastapi import FastAPI
-from pydantic import BaseModel
-from fastapi.responses import Response, JSONResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import Response
+import requests
+import os
+import base64
 
 app = FastAPI()
 
-class Req(BaseModel):
-    prompt: str
-    model: str = "stabilityai/stable-diffusion-2-1"
-    width: int = 768
-    height: int = 768
-
-@app.post("/generate")
-def generate(r: Req):
-    token = os.getenv("HF_TOKEN")
-    if not token:
-        return JSONResponse({"error":"no HF_TOKEN"}, status_code=500)
-
-    # NEW endpoint - router.huggingface.co resolves on Render
-    url = f"https://router.huggingface.co/hf-inference/models/{r.model}"
-    headers = {"Authorization": f"Bearer {token}", "Content-Type":"application/json"}
-    payload = {"inputs": r.prompt}
-
-    try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=180)
-    except Exception as e:
-        return JSONResponse({"error": f"connect fail {e}"}, status_code=500)
-
-    # Success = raw image bytes
-    if resp.ok and len(resp.content) > 10000:
-        return Response(content=resp.content, media_type="image/jpeg")
-
-    return JSONResponse({"error": resp.text[:2000], "status": resp.status_code}, status_code=500)
-
 @app.get("/")
 def home():
-    return {"ok": True, "model": "stabilityai/stable-diffusion-2-1"}
+    return {"status": "Stability API Ready"}
+
+@app.post("/generate")
+async def generate(request: Request):
+    body = await request.json()
+    prompt = body.get("prompt")
+    image_b64 = body.get("image")  # optional reference image
+
+    if not prompt:
+        return {"error": "prompt required"}
+
+    api_key = os.getenv("STABILITY_API_KEY")
+    
+    url = "https://api.stability.ai/v2beta/stable-image/generate/sd3"
+    
+    files = {}
+    data = {
+        "prompt": prompt,
+        "output_format": "png",
+        "model": "sd3.5-large",
+        "mode": "text-to-image"
+    }
+
+    if image_b64:
+        # img2img mode
+        img_bytes = base64.b64decode(image_b64)
+        files["image"] = ("ref.png", img_bytes, "image/png")
+        data["mode"] = "image-to-image"
+        data["strength"] = "0.65"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "image/*"
+    }
+
+    resp = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+    
+    if resp.status_code != 200:
+        return {"error": resp.text}
+
+    return Response(content=resp.content, media_type="image/png")
