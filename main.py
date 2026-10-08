@@ -1,47 +1,61 @@
 from fastapi import FastAPI, Request
 from fastapi.responses import Response
-import requests, os, base64, urllib.parse, io
+import base64, io, os
 from PIL import Image
+import torch
+from diffusers import StableDiffusionPipeline, StableDiffusionImg2ImgPipeline
 
 app = FastAPI()
+pipe_txt = None
+pipe_img = None
+
+def get_pipes():
+    global pipe_txt, pipe_img
+    if pipe_txt is None:
+        # tiny-sd = 400MB, fits on Render free tier, 100% free forever
+        model_id = "segmind/tiny-sd"
+        pipe_txt = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
+        pipe_img = StableDiffusionImg2ImgPipeline.from_pretrained(model_id, torch_dtype=torch.float32)
+        pipe_txt.to("cpu")
+        pipe_img.to("cpu")
+    return pipe_txt, pipe_img
 
 @app.get("/")
 def home():
-    return {"status": "App25Img FREE - No Credits Needed"}
+    return {"status": "FREE Identity Preserving Engine - No Credits"}
 
 @app.post("/generate")
 async def generate(request: Request):
+    txt_pipe, img_pipe = get_pipes()
     body = await request.json()
-    prompt = body.get("prompt","a cute cat")
+    prompt = body.get("prompt","")
     negative = body.get("negative_prompt","")
-    aspect = body.get("aspect_ratio","1:1")
-    strength = body.get("strength",0.6)
+    strength = float(body.get("strength", 0.35)) # LOW = keep same person
+    cfg = float(body.get("cfg_scale", 7.5))
     image_b64 = body.get("image")
 
-    # Free text-to-image via Pollinations - no key, no credits
-    # Works with your app exactly same as before
-    width, height = 1024, 1024
-    if aspect == "16:9": width, height = 1280, 720
-    if aspect == "9:16": width, height = 720, 1280
-
-    # Add negative to prompt if present
-    full_prompt = prompt
-    if negative:
-        full_prompt = f"{prompt}, avoid {negative}"
-
-    encoded = urllib.parse.quote(full_prompt)
-    
     if image_b64:
-        # For image-to-image we use Pollinations image model with reference
-        # Free - uses Turbo model
-        url = f"https://image.pollinations.ai/prompt/{encoded}?model=turbo&width={width}&height={height}&nologo=true&enhance=true&nofeed=true"
-        # Pollinations will use prompt + guidance, strength handled by prompt weighting
-        resp = requests.get(url, timeout=60)
+        # IMAGE-TO-IMAGE - preserves identity when strength is low
+        img_bytes = base64.b64decode(image_b64)
+        init = Image.open(io.BytesIO(img_bytes)).convert("RGB").resize((512,512))
+        # strength 0.25-0.40 = same person, new clothes/pose
+        # strength 0.6+ = different person (what you saw)
+        result = img_pipe(
+            prompt=prompt,
+            negative_prompt=negative,
+            image=init,
+            strength=strength,
+            guidance_scale=cfg,
+            num_inference_steps=25
+        ).images[0]
     else:
-        url = f"https://image.pollinations.ai/prompt/{encoded}?model=turbo&width={width}&height={height}&nologo=true&enhance=true&nofeed=true"
-        resp = requests.get(url, timeout=60)
+        result = txt_pipe(
+            prompt=prompt,
+            negative_prompt=negative,
+            guidance_scale=cfg,
+            num_inference_steps=25
+        ).images[0]
 
-    if resp.status_code != 200:
-        return Response(content=f"Pollinations error: {resp.text}", status_code=500)
-    
-    return Response(content=resp.content, media_type="image/png")
+    buf = io.BytesIO()
+    result.save(buf, format="PNG")
+    return Response(content=buf.getvalue(), media_type="image/png")
